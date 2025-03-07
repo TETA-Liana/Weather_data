@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Station (MQTT WebSockets)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.1.3/axios.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; margin-top: 20px; }
+        .container { width: 90%; max-width: 800px; margin: auto; padding: 20px; border: 2px solid #007BFF; border-radius: 10px; background: #f4f4f4; }
+        h2 { color: #007BFF; }
+        .data { font-size: 24px; font-weight: bold; color: #333; }
+        .chart-container { position: relative; height: 400px; width: 100%; margin-top: 20px; }
+        .metrics { display: flex; justify-content: space-around; margin-bottom: 20px; }
+        .metric-card { padding: 10px; border: 1px solid #ddd; border-radius: 5px; width: 45%; background: white; }
+        .status { font-size: 0.9em; color: #666; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <h2>MQTT Weather Station</h2>
+    <div class="container">
+        <div class="metrics">
+            <div class="metric-card">
+                <p>Current Temperature: <span id="temp" class="data">--</span> °C</p>
+                <p>Average (5min): <span id="avg-temp" class="data">--</span> °C</p>
+            </div>
+            <div class="metric-card">
+                <p>Current Humidity: <span id="humidity" class="data">--</span> %</p>
+                <p>Average (5min): <span id="avg-humidity" class="data">--</span> %</p>
+            </div>
+        </div>
+        <div class="chart-container">
+            <canvas id="weatherChart"></canvas>
+        </div>
+        <div class="status">
+            <p>Database: <span id="db-status">Waiting for data...</span></p>
+            <p>Last update: <span id="last-update">--</span></p>
+        </div>
+    </div>
+
+    <script>
+        // Initialize chart
+        const ctx = document.getElementById('weatherChart').getContext('2d');
+        const weatherChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Temperature (°C)',
+                        borderColor: 'rgb(255, 99, 132)',
+                        backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                        data: [],
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Humidity (%)',
+                        borderColor: 'rgb(54, 162, 235)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        data: [],
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time'
+                        }
+                    },
+                    y: {
+                        type: 'linear',
+                        display: true,
+                        position: 'left',
+                        title: {
+                            display: true,
+                            text: 'Temperature (°C)'
+                        },
+                        min: 0,
+                        max: 50
+                    },
+                    y1: {
+                        type: 'linear',
+                        display: true,
+                        position: 'right',
+                        title: {
+                            display: true,
+                            text: 'Humidity (%)'
+                        },
+                        min: 0,
+                        max: 100,
+                        grid: {
+                            drawOnChartArea: false
+                        }
+                    }
+                }
+            }
+        });
+
+        // Function to update the chart with 5-minute interval data
+        function updateChartWithHistoricalData() {
+            axios.get('/api/weather/history')
+                .then(response => {
+                    const data = response.data;
+                    
+                    if (data.length > 0) {
+                        document.getElementById("db-status").textContent = "Connected, storing data";
+                        document.getElementById("db-status").style.color = "green";
+                    }
+                    
+                    // Clear existing data
+                    weatherChart.data.labels = [];
+                    weatherChart.data.datasets[0].data = [];
+                    weatherChart.data.datasets[1].data = [];
+                    
+                    // Add historical data points
+                    data.forEach(point => {
+                        const timestamp = new Date(point.timestamp).toLocaleTimeString();
+                        weatherChart.data.labels.push(timestamp);
+                        weatherChart.data.datasets[0].data.push(point.avg_temperature);
+                        weatherChart.data.datasets[1].data.push(point.avg_humidity);
+                    });
+                    
+                    // Update average displays
+                    if (data.length > 0) {
+                        const latest = data[data.length - 1];
+                        document.getElementById("avg-temp").innerText = latest.avg_temperature !== null ? latest.avg_temperature.toFixed(1) : "--";
+                        document.getElementById("avg-humidity").innerText = latest.avg_humidity !== null ? latest.avg_humidity.toFixed(1) : "--";
+                        document.getElementById("last-update").innerText = new Date().toLocaleTimeString();
+                    }
+                    
+                    weatherChart.update();
+                })
+                .catch(error => {
+                    console.error('Error fetching historical data:', error);
+                    document.getElementById("db-status").textContent = "Error connecting to database";
+                    document.getElementById("db-status").style.color = "red";
+                });
+        }
+
+        // Connect to the MQTT Broker over WebSockets
+        const mqttClient = mqtt.connect('ws://157.173.101.159:9001');
+
+        mqttClient.on('connect', () => {
+            console.log("Connected to MQTT via WebSockets");
+            mqttClient.subscribe("/work_group_01/room_temp/temperature");
+            mqttClient.subscribe("/work_group_01/room_temp/humidity");
+        });
+
+        mqttClient.on('message', (topic, message) => {
+            console.log(`Received: ${topic} → ${message.toString()}`);
+            const value = parseFloat(message.toString());
+            
+            // Update the display
+            if (topic === "/work_group_01/room_temp/temperature") {
+                document.getElementById("temp").innerText = value.toFixed(1);
+                
+                // Send to backend to store in SQLite
+                axios.post('/api/weather/data', {
+                    type: 'temperature',
+                    value: value,
+                    timestamp: new Date().toISOString()
+                }).catch(error => console.error('Error storing temperature:', error));
+                
+            } else if (topic === "/work_group_01/room_temp/humidity") {
+                document.getElementById("humidity").innerText = value.toFixed(1);
+                
+                // Send to backend to store in SQLite
+                axios.post('/api/weather/data', {
+                    type: 'humidity',
+                    value: value,
+                    timestamp: new Date().toISOString()
+                }).catch(error => console.error('Error storing humidity:', error));
+            }
+        });
+
+        // Update chart with historical data regularly
+        updateChartWithHistoricalData(); // Initial load
+        setInterval(updateChartWithHistoricalData, 30000); // Then every 30 seconds
+    </script>
+</body>
+</html>
