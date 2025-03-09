@@ -4,7 +4,7 @@ const sqlite3 = require('sqlite3').verbose();
 const bodyParser = require('body-parser');
 const path = require('path');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(bodyParser.json());
@@ -21,7 +21,6 @@ const db = new sqlite3.Database('./weather_data.db', (err) => {
 });
 
 function createTables() {
-  // Create tables if they don't exist
   db.run(`CREATE TABLE IF NOT EXISTS raw_data (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     type TEXT NOT NULL,
@@ -35,12 +34,11 @@ function createTables() {
     avg_humidity REAL,
     timestamp TEXT NOT NULL
   )`);
-  
+
   console.log('Database tables created or already exist');
-  
-  // Calculate averages immediately to have initial data
-  calculateAndStoreAverages();
+  calculateAndStoreAverages(); // ❌ This runs too early!
 }
+
 
 // Track the latest values to calculate averages without waiting for both values
 let latestTemp = null;
